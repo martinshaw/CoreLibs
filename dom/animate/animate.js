@@ -45,7 +45,7 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 		cssString = function(props) {
 			var ret = '';
 			$.each(props, function(prop, val) {
-				ret += prop + ' : ' + val + ';';
+				ret += prop + ' : ' + val + '; ';
 			});
 			return ret;
 		},
@@ -92,24 +92,25 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 	 */
 
 	jQuery.fn.animate = function (props, speed, easing, callback) {
-		currentAnimation = {
-			from : {},
-			to : {},
-			properties : []
-		}
-
 		var optall = jQuery.speed(speed, easing, callback);
 		optall.queue = false;
 
-		oldanimate.call(this, props, optall);
-		// Store the original properties
-		currentAnimation.original = $(this).styles.apply($(this), currentAnimation.properties);
+		// Add everything to the animation queue
+		jQuery(this).queue('fx', function() {
+			var scoper = $(this);
+			// Reset current animation storage
+			currentAnimation = {
+				from : {},
+				to : {},
+				properties : []
+			}
 
-		// Most of of these calls need to happen once per element
-		this.each(function() {
-			// Add everything to the animation queue
-			jQuery(this).queue('fx', function() {
-				var self = $(this),
+			oldanimate.call(scoper, props, optall);
+			// Most of of these calls need to happen once per element
+			scoper.each(function() {
+				var self = jQuery(this),
+					// Store the original properties
+					original = self.styles.apply(self, currentAnimation.properties),
 					//the animation keyframe name
 					animationName = "animate" + (animationNum++),
 					// The key used to store the animation hook
@@ -117,12 +118,12 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 					// The last stylesheet
 					lastSheet = getLastStyleSheet(),
 					//the text for the keyframe
-					style = "@-webkit-keyframes " + animationName + " { from {"
-						+ cssString(currentAnimation.from) + "} to {"
-						+ cssString(currentAnimation.to) + " }}",
+					style = "@-webkit-keyframes " + animationName + " { from { "
+						+ cssString(original) + "} to { "
+						+ cssString(currentAnimation.to) + "}}",
 					// The animation end event handler.
 					// Will be called both on animation end and after calling .stop()
-					animationEnd = function (styles, executeCallback) {
+					animationEnd = function (executeCallback) {
 						// Hide the element if the "hide" operation was done
 						if ( currentAnimation.hide ) {
 							this.hide();
@@ -130,7 +131,7 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 
 						// Reset the properties, if the item has been hidden or shown
 						if ( currentAnimation.hide || currentAnimation.show ) {
-							this.css(currentAnimation.original);
+							this.css(original);
 						} else {
 							this.css(this.styles.apply(this, currentAnimation.properties));
 						}
@@ -163,10 +164,10 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 						self.off('webkitAnimationEnd', animationEnd);
 						if(!gotoEnd) { // We were told not to finish the animation
 							// Call animationEnd but set the CSS to the current computed style
-							animationEnd.call(self, self.styles.apply(self, currentAnimation.properties), false);
+							animationEnd.call(self, false);
 						} else {
 							// Finish animaion
-							animationEnd.call(self, currentAnimation.to, true);
+							animationEnd.call(self, true);
 						}
 					}
 				});
@@ -180,7 +181,7 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 
 				self.one('webkitAnimationEnd', function() {
 					// Call animationEnd using the current properties
-					animationEnd.call(self, currentAnimation.to, true);
+					animationEnd.call(self, true);
 					self.dequeue();
 				});
 			});

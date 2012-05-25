@@ -23,7 +23,7 @@
 <script type='text/javascript' id="demo-source">
 steal('jquery/dom/animate').then(function(){
   $("#go").click(function(){
-    $("#block").hide('slow').show('slow').hide('fast');
+    $("#block").animate({ width: 300 }, 1000).animate({ height: 300 }, 1000).hide('slow').slideDown('fast');
   });
 
 //    .hide().fadeIn('slow').animate({
