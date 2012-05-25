@@ -42,40 +42,40 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 			}
 		},
 
-		/**
-		 * Returns whether the animation should be passed to the original
-		 * jQuery.fn.animate.
-		 */
-		passThrough = function (props, ops) {
-			var nonElement = !(this[0] && this[0].nodeType),
-				isInline = !nonElement && jQuery(this).css("display") === "inline" && jQuery(this).css("float") === "none";
-
-			for (var name in props) {
-				if (props[name] == 'show' || props[name] == 'hide' // jQuery does something with these two values
-					|| jQuery.isArray(props[name]) // Arrays for individual easing
-					|| props[name] < 0 // Negative values not handled the same
-					|| name == 'zIndex' || name == 'z-index') { // unit-less value
-					return true;
-				}
-			}
-			return !supportsAnimations ||
-				jQuery.isEmptyObject(props) || // Animating empty properties
-				jQuery.isPlainObject(ops) || // Second parameter is an object - anifast only handles numbers
-				typeof ops == 'string' || // Second parameter is a string like 'slow' TODO: remove
-				isInline || nonElement;
+		cssString = function(props) {
+			var ret = '';
+			$.each(props, function(prop, val) {
+				ret += prop + ' : ' + val + ';';
+			});
+			return ret;
 		},
 
-		/**
-		 * Return the CSS number (with px added as the default unit if the value is a number)
-		 */
-		cssNumber = function(origName, value) {
-			if ( typeof value === "number" && !jQuery.cssNumber[ origName ] ) {
-				return value += "px";
-			}
-			return value;
-		},
+		oldanimate = jQuery.fn.animate,
+		oldCustom = jQuery.fx.prototype.custom,
+		currentAnimation = null;
 
-		oldanimate = jQuery.fn.animate;
+	jQuery.fx.prototype.custom = function( from, to, unit ) {
+		if(supportsAnimations) {
+			this.startTime = new Date().getTime();
+			this.end = to;
+			this.now = this.start = from;
+			this.pos = this.state = 0;
+			this.unit = unit || this.unit || ( jQuery.cssNumber[ this.prop ] ? "" : "px" );
+
+			currentAnimation.properties.push(this.prop);
+			currentAnimation.from[this.prop] = from + this.unit;
+			currentAnimation.to[this.prop] = to + this.unit;
+
+			if(this.options.hide !== currentAnimation.hide) {
+				currentAnimation.hide = this.options.hide;
+			}
+			if(this.options.show !== currentAnimation.show) {
+				currentAnimation.show = this.options.show;
+			}
+		} else {
+			oldCustom.apply(this, arguments);
+		}
+	}
 
 	/**
 	 * @function jQuery.fn.animate
@@ -90,69 +90,68 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 	 * @param {Function} [callback] A callback to execute once the animation is complete
 	 * @return {jQuery} The jQuery element
 	 */
-	jQuery.fn.animate = function (props, speed, callback) {
-		// console.log(arguments);
 
-		//default to normal animations if browser doesn't support them
-		if (passThrough.apply(this, arguments)) {
-			return oldanimate.apply(this, arguments);
+	jQuery.fn.animate = function (props, speed, easing, callback) {
+		currentAnimation = {
+			from : {},
+			to : {},
+			properties : []
 		}
 
-		if (jQuery.isFunction(speed)) {
-			callback = speed;
-		}
+		var optall = jQuery.speed(speed, easing, callback);
+		optall.queue = false;
+
+		oldanimate.call(this, props, optall);
+		// Store the original properties
+		currentAnimation.original = $(this).styles.apply($(this), currentAnimation.properties);
 
 		// Most of of these calls need to happen once per element
 		this.each(function() {
 			// Add everything to the animation queue
 			jQuery(this).queue('fx', function() {
-				var current, //current CSS values
-					properties = [], // The list of properties passed
-					to = "",
-					prop,
-					self = jQuery(this),
-					duration = jQuery.fx.speeds[speed] || speed || jQuery.fx.speeds._default,
+				var self = $(this),
 					//the animation keyframe name
 					animationName = "animate" + (animationNum++),
 					// The key used to store the animation hook
 					dataKey = animationName + '.run',
+					// The last stylesheet
+					lastSheet = getLastStyleSheet(),
 					//the text for the keyframe
-					style = "@-webkit-keyframes " + animationName + " { from {",
+					style = "@-webkit-keyframes " + animationName + " { from {"
+						+ cssString(currentAnimation.from) + "} to {"
+						+ cssString(currentAnimation.to) + " }}",
 					// The animation end event handler.
 					// Will be called both on animation end and after calling .stop()
-					animationEnd = function (currentCSS, exec) {
+					animationEnd = function (styles, executeCallback) {
+						// Hide the element if the "hide" operation was done
+						if ( currentAnimation.hide ) {
+							this.hide();
+						}
 
-						self.css(currentCSS).css({
+						// Reset the properties, if the item has been hidden or shown
+						if ( currentAnimation.hide || currentAnimation.show ) {
+							this.css(currentAnimation.original);
+						} else {
+							this.css(this.styles.apply(this, currentAnimation.properties));
+						}
+
+						this.css({
 							"-webkit-animation-duration" : "",
-							"-webkit-animation-name" : ""
+							"-webkit-animation-name" : "",
+							"-webkit-animation-fill-mode" : ""
 						});
 
 						// remove the animation keyframe
 						removeAnimation(lastSheet, animationName);
-
-						if (callback && exec) {
-							// Call success, pass the DOM element as the this reference
-							callback.apply(self[0])
-						}
-
+						// Remove .run data
 						jQuery.removeData(self, dataKey, true);
+
+						if (optall.complete && executeCallback) {
+							// Call success, pass the DOM element as the reference
+							optall.complete.apply(self[0])
+						}
 					}
 
-				for(prop in props) {
-					properties.push(prop);
-				}
-
-				// Use jQuery.styles
-				current = self.styles.apply(self, properties);
-				jQuery.each(properties, function(i, cur) {
-					style += cur + " : " + cssNumber(cur, current[cur]) + "; ";
-					to += cur + " : " + cssNumber(cur, props[cur]) + "; ";
-				});
-
-				style += "} to {" + to + " }}";
-
-				// get the last sheet and insert this rule into it
-				var lastSheet = getLastStyleSheet();
 				lastSheet.insertRule(style, lastSheet.cssRules.length);
 
 				// Add a hook which will be called when the animation stops
@@ -164,23 +163,24 @@ steal('jquery', 'jquery/dom/styles').then(function () {
 						self.off('webkitAnimationEnd', animationEnd);
 						if(!gotoEnd) { // We were told not to finish the animation
 							// Call animationEnd but set the CSS to the current computed style
-							animationEnd(self.styles.apply(self, properties), false);
+							animationEnd.call(self, self.styles.apply(self, currentAnimation.properties), false);
 						} else {
 							// Finish animaion
-							animationEnd(props, true);
+							animationEnd.call(self, currentAnimation.to, true);
 						}
 					}
 				});
 
 				// set this element to point to that animation
 				self.css({
-					"-webkit-animation-duration" : duration + "ms",
-					"-webkit-animation-name" : animationName
+					"-webkit-animation-duration" : optall.duration + "ms",
+					"-webkit-animation-name" : animationName,
+					"-webkit-animation-fill-mode" : "forwards"
 				});
 
 				self.one('webkitAnimationEnd', function() {
 					// Call animationEnd using the current properties
-					animationEnd(props, true);
+					animationEnd.call(self, currentAnimation.to, true);
 					self.dequeue();
 				});
 			});
